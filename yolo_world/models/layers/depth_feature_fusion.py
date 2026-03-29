@@ -21,7 +21,7 @@ class DepthFeatureFusion(BaseModule):
                  msf_hidden_channels: Optional[int] = None,
                  init_cfg=None) -> None:
         super().__init__(init_cfg=init_cfg)
-        if fusion_type not in {'add', 'concat', 'msf'}:
+        if fusion_type not in {'add', 'concat', 'msf', 'msf_progressive'}:
             raise ValueError(f'Unsupported fusion_type={fusion_type}')
         self.fusion_type = fusion_type
         self.fusion_indices = tuple(int(x) for x in fusion_indices)
@@ -32,6 +32,7 @@ class DepthFeatureFusion(BaseModule):
         self.depth_proj = nn.ModuleList()
         self.fuse_proj = nn.ModuleList()
         self.msf = nn.ModuleList()
+        self.prev_proj = nn.ModuleList()
 
         if feat_channels is not None:
             self.init_for_channels(feat_channels)
@@ -48,11 +49,28 @@ class DepthFeatureFusion(BaseModule):
             self.fuse_proj = nn.ModuleList()
         if self.fusion_type == 'msf':
             self.msf = nn.ModuleList([
-                ModalityAwareSelectiveFusion(int(c), self.msf_hidden_channels)
+                ModalityAwareSelectiveFusion(int(c), 2, self.msf_hidden_channels)
                 for c in feat_channels
             ])
+            self.prev_proj = nn.ModuleList()
+        elif self.fusion_type == 'msf_progressive':
+            self.msf = nn.ModuleList([
+                ModalityAwareSelectiveFusion(int(c), 3, self.msf_hidden_channels)
+                for c in feat_channels
+            ])
+            prev_proj = []
+            prev_channels = None
+            for c in feat_channels:
+                c = int(c)
+                if prev_channels is None:
+                    prev_proj.append(nn.Identity())
+                else:
+                    prev_proj.append(nn.Conv2d(int(prev_channels), c, 1))
+                prev_channels = c
+            self.prev_proj = nn.ModuleList(prev_proj)
         else:
             self.msf = nn.ModuleList()
+            self.prev_proj = nn.ModuleList()
 
         self._inited = True
 
@@ -71,6 +89,34 @@ class DepthFeatureFusion(BaseModule):
                 'DepthFeatureFusion is not initialized. '
                 'Please call init_for_channels(feat_channels) before training.'
             )
+
+        if self.fusion_type == 'msf_progressive':
+            # Bottom-up progressive fusion: P3 -> P4 -> P5.
+            # P3: texture/edges (high-res); P4: shape/contours; P5: semantics (low-res).
+            fused_prev = None
+            fused_feats = []
+            for i, feat in enumerate(rgb_feats):
+                d = depth
+                if not torch.is_floating_point(d):
+                    d = d.float()
+                d = F.interpolate(d, size=feat.shape[-2:], mode='bilinear', align_corners=False)
+                d = self.depth_proj[i](d)
+
+                if fused_prev is None:
+                    prev = torch.zeros_like(feat)
+                else:
+                    prev = F.interpolate(
+                        fused_prev,
+                        size=feat.shape[-2:],
+                        mode='bilinear',
+                        align_corners=False)
+                    prev = self.prev_proj[i](prev)
+
+                w_d = self.msf[i](feat, d, prev) - feat
+                fused = feat + prev + w_d
+                fused_feats.append(fused)
+                fused_prev = fused
+            return tuple(fused_feats)
 
         fused_feats = []
         for i, feat in enumerate(rgb_feats):
