@@ -136,6 +136,20 @@ train_cfg = dict(
                         _base_.val_interval_stage2)]
 )
 
+custom_hooks = [
+    dict(
+        type='EMAHook',
+        ema_type='ExpMomentumEMA',
+        momentum=0.0001,
+        update_buffers=True,
+        strict_load=False,
+        priority=49),
+    dict(
+        type='mmdet.PipelineSwitchHook',
+        switch_epoch=max_epochs - close_mosaic_epochs,
+        switch_pipeline=train_pipeline_stage2)
+]
+
 default_hooks = dict(
     checkpoint=dict(interval=5, max_keep_ckpts=3, save_best='auto')
 )

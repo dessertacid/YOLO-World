@@ -14,7 +14,7 @@ from mmdet.utils import get_test_pipeline_cfg
 
 import supervision as sv
 
-BOUNDING_BOX_ANNOTATOR = sv.BoundingBoxAnnotator(thickness=1)
+BOUNDING_BOX_ANNOTATOR = sv.BoundingBoxAnnotator(thickness=3)
 MASK_ANNOTATOR = sv.MaskAnnotator()
 
 
@@ -31,9 +31,9 @@ class LabelAnnotator(sv.LabelAnnotator):
         return center_x, center_y, center_x + text_w, center_y + text_h
 
 
-LABEL_ANNOTATOR = LabelAnnotator(text_padding=4,
-                                 text_scale=0.5,
-                                 text_thickness=1)
+LABEL_ANNOTATOR = LabelAnnotator(text_padding=6,
+                                 text_scale=0.8,
+                                 text_thickness=2)
 
 
 def parse_args():
@@ -94,7 +94,12 @@ def inference_detector(model,
                        use_amp=False,
                        show=False,
                        annotation=False):
-    data_info = dict(img_id=0, img_path=image, texts=texts)
+    image_path = image
+    input_image = cv2.imread(image_path)
+    if input_image is None:
+        raise FileNotFoundError(f'Failed to load image: {image_path}')
+    input_image = input_image[:, :, [2, 1, 0]]
+    data_info = dict(img=input_image, img_id=0, img_path=image_path, texts=texts)
     data_info = test_pipeline(data_info)
     data_batch = dict(inputs=data_info['inputs'].unsqueeze(0),
                       data_samples=[data_info['data_samples']])
@@ -105,11 +110,20 @@ def inference_detector(model,
         pred_instances = pred_instances[pred_instances.scores.float() >
                                         score_thr]
 
+    if len(pred_instances) == 0:
+        print(f'No detections found (threshold={score_thr}).')
+        return
+
     if len(pred_instances.scores) > max_dets:
         indices = pred_instances.scores.float().topk(max_dets)[1]
         pred_instances = pred_instances[indices]
 
     pred_instances = pred_instances.cpu().numpy()
+    try:
+        max_score = float(pred_instances['scores'].max()) if len(pred_instances) else 0.0
+        print(f'Detections: {len(pred_instances)} (max_score={max_score:.4f})')
+    except Exception:
+        pass
 
     if 'masks' in pred_instances:
         masks = pred_instances['masks']
@@ -142,7 +156,8 @@ def inference_detector(model,
         images_dict[osp.basename(image_path)] = anno_image
         annotations_dict[osp.basename(image_path)] = detections
 
-        ANNOTATIONS_DIRECTORY = os.makedirs(r"./annotations", exist_ok=True)
+        ANNOTATIONS_DIRECTORY = "./annotations"
+        os.makedirs(ANNOTATIONS_DIRECTORY, exist_ok=True)
 
         MIN_IMAGE_AREA_PERCENTAGE = 0.002
         MAX_IMAGE_AREA_PERCENTAGE = 0.80
@@ -176,11 +191,14 @@ if __name__ == '__main__':
                             osp.splitext(osp.basename(args.config))[0])
     # init model
     cfg.load_from = args.checkpoint
-    model = init_detector(cfg, checkpoint=args.checkpoint, device=args.device)
+    model = init_detector(cfg,
+                          checkpoint=args.checkpoint,
+                          device=args.device,
+                          palette='random')
 
     # init test pipeline
     test_pipeline_cfg = get_test_pipeline_cfg(cfg=cfg)
-    # test_pipeline[0].type = 'mmdet.LoadImageFromNDArray'
+    test_pipeline_cfg[0].type = 'mmdet.LoadImageFromNDArray'
     test_pipeline = Compose(test_pipeline_cfg)
 
     if args.text.endswith('.txt'):
@@ -191,8 +209,7 @@ if __name__ == '__main__':
         texts = [[t.strip()] for t in args.text.split(',')] + [[' ']]
 
     output_dir = args.output_dir
-    if not osp.exists(output_dir):
-        os.mkdir(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
 
     # load images
     if not osp.isfile(args.image):
