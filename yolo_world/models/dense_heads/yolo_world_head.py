@@ -360,10 +360,16 @@ class YOLOWorldHead(YOLOv8Head):
         head on the features of the upstream network."""
 
         outs = self(img_feats, txt_feats, txt_masks)
-        # Fast version
-        loss_inputs = outs + (batch_data_samples['bboxes_labels'],
-                              batch_data_samples['img_metas'])
-        losses = self.loss_by_feat(*loss_inputs)
+        if isinstance(batch_data_samples, list):
+            (batch_gt_instances, batch_gt_instances_ignore,
+             batch_img_metas) = unpack_gt_instances(batch_data_samples)
+            loss_inputs = outs + (batch_gt_instances, batch_img_metas,
+                                  batch_gt_instances_ignore)
+            losses = self.loss_by_feat(*loss_inputs, batch_text_masks=txt_masks)
+        else:
+            loss_inputs = outs + (batch_data_samples['bboxes_labels'],
+                                  batch_data_samples['img_metas'])
+            losses = self.loss_by_feat(*loss_inputs, batch_text_masks=txt_masks)
 
         return losses
 
@@ -384,11 +390,12 @@ class YOLOWorldHead(YOLOv8Head):
 
         outs = self(img_feats, txt_feats, txt_masks)
 
-        loss_inputs = outs + (txt_masks, batch_gt_instances, batch_img_metas,
+        loss_inputs = outs + (batch_gt_instances, batch_img_metas,
                               batch_gt_instances_ignore)
-        losses = self.loss_by_feat(*loss_inputs)
+        losses = self.loss_by_feat(*loss_inputs, batch_text_masks=txt_masks)
 
-        predictions = self.predict_by_feat(*outs,
+        outs_for_pred = outs[:2] if len(outs) >= 2 else outs
+        predictions = self.predict_by_feat(*outs_for_pred,
                                            batch_img_metas=batch_img_metas,
                                            cfg=proposal_cfg)
         return losses, predictions
@@ -411,7 +418,8 @@ class YOLOWorldHead(YOLOv8Head):
             data_samples.metainfo for data_samples in batch_data_samples
         ]
         outs = self(img_feats, txt_feats, txt_masks)
-        predictions = self.predict_by_feat(*outs,
+        outs_for_pred = outs[:2] if len(outs) >= 2 else outs
+        predictions = self.predict_by_feat(*outs_for_pred,
                                            batch_img_metas=batch_img_metas,
                                            rescale=rescale)
         return predictions
@@ -430,10 +438,10 @@ class YOLOWorldHead(YOLOv8Head):
             cls_scores: Sequence[Tensor],
             bbox_preds: Sequence[Tensor],
             bbox_dist_preds: Sequence[Tensor],
-            batch_text_masks: Tensor,
             batch_gt_instances: Sequence[InstanceData],
             batch_img_metas: Sequence[dict],
-            batch_gt_instances_ignore: OptInstanceList = None) -> dict:
+            batch_gt_instances_ignore: OptInstanceList = None,
+            batch_text_masks: Optional[Tensor] = None) -> dict:
         """Calculate the loss based on the features extracted by the detection
         head.
 

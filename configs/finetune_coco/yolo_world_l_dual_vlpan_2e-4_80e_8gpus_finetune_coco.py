@@ -33,7 +33,7 @@ model = dict(
         image_model={{_base_.model.backbone}},
         text_model=dict(
             type='HuggingCLIPLanguageBackbone',
-            model_name='openai/clip-vit-base-patch32',
+            model_name='/root/models/clip-vit-base-patch32',
             frozen_modules=['all'])),
     neck=dict(type='YOLOWorldDualPAFPN',
               guide_channels=text_channels,
