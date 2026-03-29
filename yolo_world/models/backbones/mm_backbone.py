@@ -6,7 +6,7 @@ from torch import Tensor
 from torch.nn.modules.batchnorm import _BatchNorm
 from mmengine.model import BaseModule
 from mmyolo.registry import MODELS
-from mmdet.utils import OptMultiConfig, ConfigType
+from mmdet.utils import OptMultiConfig, ConfigType, OptConfigType
 from transformers import (AutoTokenizer, AutoModel, CLIPTextConfig)
 from transformers import CLIPTextModelWithProjection as CLIPTP
 
@@ -195,10 +195,20 @@ class MultiModalYOLOBackbone(BaseModule):
                  text_model: ConfigType,
                  frozen_stages: int = -1,
                  with_text_model: bool = True,
+                 depth_fusion: OptConfigType = None,
                  init_cfg: OptMultiConfig = None) -> None:
         super().__init__(init_cfg)
         self.with_text_model = with_text_model
         self.image_model = MODELS.build(image_model)
+        self.depth_fusion = MODELS.build(depth_fusion) if depth_fusion else None
+        if self.depth_fusion is not None and hasattr(self.depth_fusion, 'init_for_channels'):
+            with torch.no_grad():
+                input_channels = getattr(self.image_model, 'input_channels', 3)
+                device = next(self.image_model.parameters()).device
+                dummy = torch.zeros(1, int(input_channels), 64, 64, device=device)
+                feats = self.image_model(dummy)
+                feat_channels = [int(f.shape[1]) for f in feats]
+            self.depth_fusion.init_for_channels(feat_channels)
         if self.with_text_model:
             self.text_model = MODELS.build(text_model)
         else:
@@ -224,7 +234,19 @@ class MultiModalYOLOBackbone(BaseModule):
 
     def forward(self, image: Tensor,
                 text: List[List[str]]) -> Tuple[Tuple[Tensor], Tensor]:
+        depth = None
+        if isinstance(image, (tuple, list)) and len(image) == 2:
+            image, depth = image
+        elif isinstance(image, dict):
+            depth = image.get('depth', None)
+            image = image.get('rgb', image.get('image', None))
+        elif isinstance(image, Tensor) and image.dim() == 4 and image.size(1) == 4:
+            depth = image[:, 3:4, ...]
+            image = image[:, :3, ...]
+
         img_feats = self.image_model(image)
+        if depth is not None and self.depth_fusion is not None:
+            img_feats = self.depth_fusion(img_feats, depth)
         if text is not None and self.with_text_model:
             txt_feats = self.text_model(text)
             return img_feats, txt_feats

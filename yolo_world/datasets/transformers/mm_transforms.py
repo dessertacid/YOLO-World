@@ -4,6 +4,8 @@ import random
 from typing import Tuple
 
 import numpy as np
+import cv2
+import os
 from mmyolo.registry import TRANSFORMS
 
 
@@ -125,5 +127,99 @@ class LoadText:
             texts.append(sel_cls_cap)
 
         results['texts'] = texts
+
+        return results
+
+
+@TRANSFORMS.register_module()
+class LoadDepthAndFuse:
+
+    def __init__(self,
+                 img_dirname: str = 'images',
+                 depth_dirname: str = 'depth',
+                 depth_ext: str = None,
+                 mode: str = 'alpha_blend',
+                 alpha: float = 0.5,
+                 depth_scale: float = 1.0,
+                 imread_flag: int = cv2.IMREAD_UNCHANGED,
+                 ignore_missing: bool = False) -> None:
+        self.img_dirname = img_dirname
+        self.depth_dirname = depth_dirname
+        self.depth_ext = depth_ext
+        self.mode = mode
+        self.alpha = float(alpha)
+        self.depth_scale = float(depth_scale)
+        self.imread_flag = imread_flag
+        self.ignore_missing = ignore_missing
+
+    def _infer_depth_path(self, img_path: str) -> str:
+        img_dir, img_name = os.path.split(img_path)
+        stem, ext = os.path.splitext(img_name)
+        depth_ext = self.depth_ext if self.depth_ext is not None else ext
+        depth_dir = img_dir.replace(f'{os.sep}{self.img_dirname}{os.sep}',
+                                    f'{os.sep}{self.depth_dirname}{os.sep}')
+        return os.path.join(depth_dir, stem + depth_ext)
+
+    def __call__(self, results: dict) -> dict:
+        if 'img' not in results:
+            raise KeyError('LoadDepthAndFuse requires results["img"] to exist. '
+                           'Please place it after LoadImageFromFile.')
+        img = results['img']
+        if img is None:
+            raise ValueError('results["img"] is None.')
+
+        img_path = results.get('img_path', None)
+        if img_path is None:
+            raise KeyError('LoadDepthAndFuse requires results["img_path"] to '
+                           'exist to locate depth image.')
+
+        depth_path = results.get('depth_path', None)
+        if depth_path is None:
+            depth_path = self._infer_depth_path(img_path)
+
+        depth = cv2.imread(depth_path, self.imread_flag)
+        if depth is None:
+            if self.ignore_missing:
+                return results
+            raise FileNotFoundError(
+                f'Failed to read depth image: {depth_path} (from img_path={img_path})'
+            )
+
+        if depth.ndim == 3:
+            depth = depth[:, :, 0]
+
+        if depth.shape[:2] != img.shape[:2]:
+            depth = cv2.resize(depth, (img.shape[1], img.shape[0]),
+                               interpolation=cv2.INTER_NEAREST)
+
+        if self.mode in {'raw_add', 'raw_concat'}:
+            if depth.dtype == np.uint16:
+                depth_u8 = (depth.astype(np.float32) / 256.0).astype(np.uint8)
+            elif depth.dtype == np.uint8:
+                depth_u8 = depth
+            else:
+                depth_f = depth.astype(np.float32)
+                if depth_f.max() <= 1.0:
+                    depth_f = depth_f * 255.0
+                depth_u8 = np.clip(depth_f, 0.0, 255.0).astype(np.uint8)
+
+            if self.mode == 'raw_concat':
+                depth_1c = depth_u8[:, :, None]
+                results['img'] = np.concatenate([img, depth_1c], axis=2)
+            else:
+                depth_rgb = depth_u8[:, :, None].repeat(3, axis=2).astype(np.float32)
+                fused = img.astype(np.float32) + depth_rgb * self.depth_scale
+                results['img'] = np.clip(fused, 0.0, 255.0).astype(np.uint8)
+        else:
+            depth_f = depth.astype(np.float32)
+            if depth_f.max() > 255:
+                depth_f = depth_f / 65535.0
+            else:
+                depth_f = depth_f / 255.0
+            depth_f = np.clip(depth_f, 0.0, 1.0)
+
+            depth_rgb = (depth_f[:, :, None] * 255.0).repeat(3, axis=2)
+            fused = img.astype(np.float32) * (1.0 - self.alpha) + depth_rgb * self.alpha
+            results['img'] = np.clip(fused, 0.0, 255.0).astype(np.uint8)
 
         return results

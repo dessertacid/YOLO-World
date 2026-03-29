@@ -24,6 +24,8 @@ num_training_classes = num_classes
 data_root = 'dataset/coco_capsule-5label-300/'
 class_text_path = data_root + 'class_texts.json'
 
+fusion_type = 'add'
+
 max_epochs = 80
 close_mosaic_epochs = 10
 base_lr = 2e-4
@@ -35,6 +37,18 @@ load_from = 'weights/yolo_world_l_clip_base_dual_vlpan_2e-3adamw_32xb16_100e_o36
 model = dict(
     num_train_classes=num_training_classes,
     num_test_classes=num_classes,
+    data_preprocessor=dict(
+        _delete_=True,
+        type='YOLOWDetDataPreprocessor',
+        mean=None,
+        std=None,
+        bgr_to_rgb=False),
+    backbone=dict(
+        depth_fusion=dict(
+            type='DepthFeatureFusion',
+            fusion_type=fusion_type,
+            fusion_indices=(1, ),
+            depth_in_channels=1)),
     bbox_head=dict(
         head_module=dict(
             num_classes=num_training_classes
@@ -61,19 +75,61 @@ text_transform = [
     )
 ]
 
+pre_transform = [
+    dict(type='LoadImageFromFile', backend_args=_base_.backend_args),
+    dict(type='LoadDepthAndFuse',
+         img_dirname='images',
+         depth_dirname='depth',
+         depth_ext='.png',
+         mode='raw_concat'),
+    dict(type='LoadAnnotations', with_bbox=True)
+]
+
+mosaic_affine_transform = [
+    dict(
+        type='MultiModalMosaic',
+        img_scale=_base_.img_scale,
+        pad_val=114.0,
+        pre_transform=pre_transform),
+    dict(
+        type='YOLOv5RandomAffine',
+        max_rotate_degree=0.0,
+        max_shear_degree=0.0,
+        max_aspect_ratio=100.,
+        scaling_ratio_range=(1 - _base_.affine_scale,
+                             1 + _base_.affine_scale),
+        border=(-_base_.img_scale[0] // 2, -_base_.img_scale[1] // 2),
+        border_val=(114, 114, 114))
+]
+
 train_pipeline = [
-    *_base_.pre_transform,
-    *_base_.mosaic_affine_transform,
+    *pre_transform,
+    *mosaic_affine_transform,
     dict(
         type='YOLOv5MultiModalMixUp',
         prob=_base_.mixup_prob,
-        pre_transform=[*_base_.pre_transform, *_base_.mosaic_affine_transform]),
-    *_base_.last_transform[:-1],
+        pre_transform=[*pre_transform, *mosaic_affine_transform]),
+    dict(type='mmdet.RandomFlip', prob=0.5),
     *text_transform,
 ]
 
 train_pipeline_stage2 = [
-    *_base_.train_pipeline_stage2[:-2],
+    *pre_transform,
+    dict(type='YOLOv5KeepRatioResize', scale=_base_.img_scale),
+    dict(
+        type='LetterResize',
+        scale=_base_.img_scale,
+        allow_scale_up=True,
+        pad_val=dict(img=114.0)),
+    dict(
+        type='YOLOv5RandomAffine',
+        max_rotate_degree=0.0,
+        max_shear_degree=0.0,
+        scaling_ratio_range=(1 - _base_.affine_scale,
+                             1 + _base_.affine_scale),
+        max_aspect_ratio=100,
+        border_val=(114, 114, 114)),
+    dict(type='mmdet.RandomFlip', prob=0.5),
     *text_transform,
 ]
 
@@ -119,7 +175,26 @@ val_dataloader = dict(
             test_mode=True
         ),
         class_text_path=class_text_path,
-        pipeline=_base_.test_pipeline
+        pipeline=[
+            dict(type='LoadImageFromFile', backend_args=_base_.backend_args),
+            dict(type='LoadDepthAndFuse',
+                 img_dirname='images',
+                 depth_dirname='depth',
+                 depth_ext='.png',
+                 mode='raw_concat'),
+            dict(scale=_base_.img_scale, type='YOLOv5KeepRatioResize'),
+            dict(
+                allow_scale_up=False,
+                pad_val=dict(img=114),
+                scale=_base_.img_scale,
+                type='LetterResize'),
+            dict(_scope_='mmdet', type='LoadAnnotations', with_bbox=True),
+            dict(type='LoadText'),
+            dict(
+                meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
+                           'scale_factor', 'pad_param', 'texts'),
+                type='mmdet.PackDetInputs'),
+        ]
     )
 )
 

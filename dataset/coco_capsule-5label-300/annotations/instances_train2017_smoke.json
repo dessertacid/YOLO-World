@@ -1,0 +1,28 @@
+{
+  "images": [
+    {
+      "id": 1,
+      "file_name": "crack_1.png",
+      "width": 200,
+      "height": 200
+    }
+  ],
+  "annotations": [
+    {
+      "id": 1,
+      "image_id": 1,
+      "category_id": 2,
+      "bbox": [50, 50, 80, 80],
+      "area": 6400,
+      "iscrowd": 0,
+      "segmentation": [[50, 50, 130, 50, 130, 130, 50, 130]]
+    }
+  ],
+  "categories": [
+    { "id": 1, "name": "color repetition", "supercategory": "object" },
+    { "id": 2, "name": "crack", "supercategory": "object" },
+    { "id": 3, "name": "depression", "supercategory": "object" },
+    { "id": 4, "name": "empty capsules", "supercategory": "object" },
+    { "id": 5, "name": "black spot", "supercategory": "object" }
+  ]
+}

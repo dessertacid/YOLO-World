@@ -33,7 +33,11 @@ class YOLOWDetDataPreprocessor(DetDataPreprocessor):
             dict: Data in the same format as the model input.
         """
         if not training:
-            return super().forward(data, training)
+            data = super().forward(data, training)
+            inputs = data['inputs']
+            if not torch.is_floating_point(inputs):
+                data['inputs'] = inputs.float()
+            return data
 
         data = self.cast_data(data)
         inputs, data_samples = data['inputs'], data['data_samples']
@@ -44,6 +48,8 @@ class YOLOWDetDataPreprocessor(DetDataPreprocessor):
             inputs = inputs[:, [2, 1, 0], ...]
         if self._enable_normalize:
             inputs = (inputs - self.mean) / self.std
+        elif not torch.is_floating_point(inputs):
+            inputs = inputs.float()
 
         if self.batch_augments is not None:
             for batch_aug in self.batch_augments:

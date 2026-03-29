@@ -346,8 +346,9 @@ class MultiModalMosaic(BaseMultiModalMixImageTransform):
         img_scale_w, img_scale_h = self.img_scale
 
         if len(results['img'].shape) == 3:
+            channels = results['img'].shape[2]
             mosaic_img = np.full(
-                (int(img_scale_h * 2), int(img_scale_w * 2), 3),
+                (int(img_scale_h * 2), int(img_scale_w * 2), channels),
                 self.pad_val,
                 dtype=results['img'].dtype)
         else:
@@ -653,8 +654,9 @@ class MultiModalMosaic9(BaseMultiModalMixImageTransform):
         img_scale_w, img_scale_h = self.img_scale
 
         if len(results['img'].shape) == 3:
+            channels = results['img'].shape[2]
             mosaic_img = np.full(
-                (int(img_scale_h * 3), int(img_scale_w * 3), 3),
+                (int(img_scale_h * 3), int(img_scale_w * 3), channels),
                 self.pad_val,
                 dtype=results['img'].dtype)
         else:
