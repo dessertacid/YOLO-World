@@ -11,6 +11,7 @@ from .yolo_bricks import (
     )
 from .learnable_depth_calibration import LearnableDepthCalibration, LDC
 from .depth_feature_fusion import DepthFeatureFusion
+from .modality_aware_selective_fusion import ModalityAwareSelectiveFusion, MSF
 
 __all__ = ['CSPLayerWithTwoConv',
            'MaxSigmoidAttnBlock',
@@ -20,4 +21,6 @@ __all__ = ['CSPLayerWithTwoConv',
            'ImagePoolingAttentionModule',
            'LearnableDepthCalibration',
            'LDC',
-           'DepthFeatureFusion']
+           'DepthFeatureFusion',
+           'ModalityAwareSelectiveFusion',
+           'MSF']

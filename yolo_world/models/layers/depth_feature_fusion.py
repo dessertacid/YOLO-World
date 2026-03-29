@@ -7,6 +7,8 @@ from mmengine.model import BaseModule
 from mmyolo.registry import MODELS
 from torch import Tensor
 
+from .modality_aware_selective_fusion import ModalityAwareSelectiveFusion
+
 
 @MODELS.register_module()
 class DepthFeatureFusion(BaseModule):
@@ -16,17 +18,20 @@ class DepthFeatureFusion(BaseModule):
                  fusion_indices: Sequence[int] = (1, ),
                  depth_in_channels: int = 1,
                  feat_channels: Optional[Sequence[int]] = None,
+                 msf_hidden_channels: Optional[int] = None,
                  init_cfg=None) -> None:
         super().__init__(init_cfg=init_cfg)
-        if fusion_type not in {'add', 'concat'}:
+        if fusion_type not in {'add', 'concat', 'msf'}:
             raise ValueError(f'Unsupported fusion_type={fusion_type}')
         self.fusion_type = fusion_type
         self.fusion_indices = tuple(int(x) for x in fusion_indices)
         self.depth_in_channels = int(depth_in_channels)
+        self.msf_hidden_channels = msf_hidden_channels
 
         self._inited = False
         self.depth_proj = nn.ModuleList()
         self.fuse_proj = nn.ModuleList()
+        self.msf = nn.ModuleList()
 
         if feat_channels is not None:
             self.init_for_channels(feat_channels)
@@ -41,6 +46,13 @@ class DepthFeatureFusion(BaseModule):
             ])
         else:
             self.fuse_proj = nn.ModuleList()
+        if self.fusion_type == 'msf':
+            self.msf = nn.ModuleList([
+                ModalityAwareSelectiveFusion(int(c), self.msf_hidden_channels)
+                for c in feat_channels
+            ])
+        else:
+            self.msf = nn.ModuleList()
 
         self._inited = True
 
@@ -74,7 +86,9 @@ class DepthFeatureFusion(BaseModule):
 
             if self.fusion_type == 'add':
                 fused_feats.append(feat + d)
-            else:
+            elif self.fusion_type == 'concat':
                 fused_feats.append(self.fuse_proj[i](torch.cat([feat, d], dim=1)))
+            else:
+                fused_feats.append(self.msf[i](feat, d))
 
         return tuple(fused_feats)
